@@ -1,0 +1,586 @@
+package com.example.firebasechattingapplication.view.fragments
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.MediaPlayer
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
+import android.util.Log
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
+import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.lifecycleScope
+import androidx.navigation.fragment.findNavController
+import com.example.firebasechattingapplication.R
+import com.example.firebasechattingapplication.audio.AudioRecorderHelper
+import com.example.firebasechattingapplication.audio.AudioRecorderHelper.isRecording
+import com.example.firebasechattingapplication.databinding.FragmentChatScreenBinding
+import com.example.firebasechattingapplication.model.AuthState
+import com.example.firebasechattingapplication.model.dataclasses.Message
+import com.example.firebasechattingapplication.model.dataclasses.OnlineUser
+import com.example.firebasechattingapplication.utils.CommonFunctions.decodeBase64Audio
+import com.example.firebasechattingapplication.utils.CommonFunctions.showSettingsDialog
+import com.example.firebasechattingapplication.utils.CommonFunctions.showToast
+import com.example.firebasechattingapplication.utils.Constants
+import com.example.firebasechattingapplication.utils.ImagePickerUtility
+import com.example.firebasechattingapplication.utils.SharedPreferencesHelper.getString
+import com.example.firebasechattingapplication.utils.encodeAudioToBase64
+import com.example.firebasechattingapplication.utils.getCurrentUtcDateTimeModern
+import com.example.firebasechattingapplication.utils.gone
+import com.example.firebasechattingapplication.utils.toLastSeenTime
+import com.example.firebasechattingapplication.utils.toTimestampMillis
+import com.example.firebasechattingapplication.utils.visible
+import com.example.firebasechattingapplication.view.adapters.MessagesAdapter
+import com.example.firebasechattingapplication.viewmodel.AuthViewModel
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
+import java.io.File
+import java.io.IOException
+
+
+const val TYPING_TIMEOUT_MS = 1500L
+
+@AndroidEntryPoint
+class ChatFragment : ImagePickerUtility() {
+    private lateinit var binding: FragmentChatScreenBinding
+    private val authViewModel: AuthViewModel by viewModels()
+    var receiverId: String? = ""
+    var receiverToken: String? = ""
+    var receiverName: String? = ""
+    var receiverGender: Int? = null
+    private val messages = ArrayList<Message>()
+    private var messagesAdapter: MessagesAdapter? = null
+    private val onlineUser = ArrayList<OnlineUser>()
+    private var lastAudioPosition: Int? = null
+    var mediaPlayer: MediaPlayer? = null
+    private val seekHandler = Handler()
+    private var isFirstLoad = true
+    private var currentPlayingFile: File? = null
+
+    companion object {
+        var isChatOpen = false
+    }
+
+    override fun onStart() {
+        super.onStart()
+        isChatOpen = true
+    }
+
+    override fun onStop() {
+        super.onStop()
+        isChatOpen = false
+    }
+
+    private val requestAudioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            // Permission granted! Start recording
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                updateTypingStatus(isTyping = false, isRecording = true)
+            }
+            AudioRecorderHelper.startRecording(requireContext(), binding.recordIV)
+        } else {
+            // Permission denied
+            if (!shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)) {
+                showSettingsDialog(
+                    requireContext(),
+                    "Microphone access is permanently denied. Please enable it in App Settings to send voice messages."
+                )
+            } else {
+                showToast(requireContext(),"Microphone permission is required to record audio.")
+            }
+        }
+    }
+
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View? {
+        binding = FragmentChatScreenBinding.inflate(layoutInflater, container, false)
+        return binding.root
+    }
+
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        applySystemInsetsPadding(binding.main)
+        if (arguments != null) {
+            if (requireArguments().containsKey(Constants.USER_ID))
+                receiverId = requireArguments().getString(Constants.USER_ID)
+            if (requireArguments().containsKey(Constants.USER_NAME))
+                receiverName = requireArguments().getString(Constants.USER_NAME)
+            if (requireArguments().containsKey(Constants.USER_GENDER))
+                receiverGender = requireArguments().getInt(Constants.USER_GENDER)
+            if (requireArguments().containsKey(Constants.USER_TOKEN)) {
+                Log.d("lfkjwfkjkfwe", "onViewCreated USER_TOKEN : ${requireArguments().getString(Constants.USER_TOKEN)}")
+                receiverToken = requireArguments().getString(Constants.USER_TOKEN)
+            }
+        }
+        binding.tv.text = receiverName
+        setChatsAdapter()
+        if (isFirstLoad) {  //to stop get message being called everytime i come back from zoom image fragment
+            getMessages(getString(requireContext(), Constants.USER_ID), receiverId)
+            isFirstLoad = false
+        }
+        getActiveUsers()
+        setUpClickListeners()
+        setupTypingDetector()
+    }
+
+    private fun openZoomImage(image: String) {
+        findNavController().navigate(R.id.zoomImageFragment, Bundle().apply { putString("image", image) })
+    }
+
+    private fun getActiveUsers() {
+        authViewModel.getOnlineUsers()
+            .onEach { messageList ->
+                onlineUser.clear()
+                onlineUser.addAll(messageList)
+                for (m in messageList)
+                    if (m.id == receiverId)
+                        if (m.typing == true && m.typingToUserId == getString(
+                                requireContext(),
+                                Constants.USER_ID
+                            )
+                        )
+                            binding.lastSeenTV.text = getString(R.string.typing)
+                        else if (m.recording == true && m.typingToUserId == getString(
+                                requireContext(),
+                                Constants.USER_ID
+                            )
+                        )
+                            binding.lastSeenTV.text = getString(R.string.recording)
+                        else if (m.online == true)
+                            binding.lastSeenTV.text = getString(R.string.online)
+                        else
+                            binding.lastSeenTV.text =
+                                m.lastSeen?.toTimestampMillis()?.toLastSeenTime()
+            }
+            .catch { e ->
+                showToast(requireContext(),"Error loading messages.")
+            }.launchIn(viewLifecycleOwner.lifecycleScope)  //starts collection -> tied to view
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun getMessages(
+        senderId: String?,
+        receiverId: String?
+    ) {
+        Log.d("lfkjwfkjkfwe", "getMessages: $senderId $receiverId")
+        if (senderId == null) {
+            //id is null
+            return
+        }
+
+        authViewModel.getMessages(chatId = senderId + receiverId, chatId2 = receiverId + senderId)
+            .onEach { messageList ->
+                messages.clear()
+                messages.addAll(messageList)
+
+                if (receiverToken == "")
+                    fetchUserToken(messageList)
+
+                updateMessageStatus(
+                    receiverId + getString(
+                        requireContext(),
+                        Constants.USER_ID
+                    )
+                )
+                messagesAdapter?.notifyDataSetChanged()
+                if (messageList.isNotEmpty()) {
+                    binding.noMessagesTV.gone()
+                    binding.messagesRV.smoothScrollToPosition(messageList.size - 1)
+                } else {
+                    binding.noMessagesTV.visible()
+                }
+            }
+            .catch { e ->
+                Log.e("Chat", "Error collecting combined messages: ${e.message}")
+                showToast(requireContext(),"Error loading messages.")
+            }
+            .launchIn(viewLifecycleOwner.lifecycleScope)  //starts collection -> tied to view
+    }
+
+    private fun fetchUserToken(messageList: List<Message>) {
+       for(m in messageList){
+           if (m.senderId != getString(requireContext(), Constants.USER_ID))
+               receiverToken = m.senderToken
+           else
+               receiverToken = m.receiverToken
+           if (!receiverToken.isNullOrEmpty()){
+               Log.d("lfkjwfkjkfwe", "fetchUserToken: $receiverToken")
+               return
+           }
+       }
+    }
+
+    private fun checkPermissions(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            requireContext(),
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+
+    // Requests microphone permission
+    private fun requestPermissions() {
+        /* ActivityCompat.requestPermissions(
+             requireActivity(),
+             arrayOf(Manifest.permission.RECORD_AUDIO),
+             REQUEST_AUDIO_PERMISSION_CODE
+         )*/
+        requestAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun setUpClickListeners() {
+        binding.backIV.setOnClickListener {
+            findNavController().popBackStack()
+        }
+        binding.attachmentIV.setOnClickListener {
+            getImage()
+        }
+        binding.recordIV.setOnClickListener {
+            if (isRecording) {
+                //stop recording and send the encoded date to firestore
+                val audioFile = AudioRecorderHelper.stopRecording(requireContext(), binding.recordIV)
+                if (audioFile!=null){
+                    val base64Audio = encodeAudioToBase64(audioFile.filePath)
+                    if (base64Audio != null) {
+                        sendMessage(null, base64Audio)
+                    }
+                }
+                updateTypingStatus(isTyping = false, isRecording = false)
+            } else {
+                if (!checkPermissions()) {
+                    requestPermissions()  //request mic permission
+                    return@setOnClickListener
+                } else {
+                    updateTypingStatus(isTyping = false, isRecording = true)
+                    AudioRecorderHelper.startRecording(requireContext(), binding.recordIV)
+                }
+            }
+        }
+        binding.sendBT.setOnClickListener {
+            if (binding.messageET.text.toString().trim().isNotEmpty()) {
+                sendMessage(binding.messageET.text.toString().trim(), null)
+            }
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun sendMessage(message: String?, base64Audio: String?) {
+        val message = Message(
+            senderId = getString(requireContext(), Constants.USER_ID),
+            receiverId = receiverId,
+            senderName = getString(requireContext(), Constants.USER_NAME),
+            receiverName = receiverName,
+            message = message,
+            time = getCurrentUtcDateTimeModern(),
+            read = false,
+            gender = getString(requireContext(), Constants.USER_GENDER)?.toInt(),
+            senderGender = getString(requireContext(), Constants.USER_GENDER)?.toInt(),
+            receiverGender = receiverGender,
+            receiverToken = receiverToken,
+            senderToken = getString(requireContext(), Constants.USER_TOKEN),
+            audio = base64Audio
+        )
+        binding.messageET.text = null
+        authViewModel.sendMessageToUser(message)
+        authViewModel.authState.observe(viewLifecycleOwner) { state ->
+            when (state) {
+                is AuthState.Error -> {
+                    showToast(requireContext(),"Error while sending message. Please try again.")
+                }
+
+                AuthState.Loading -> {}
+                is AuthState.Success -> {
+                    messagesAdapter?.notifyDataSetChanged()
+                    binding.noMessagesTV.gone()
+                }
+            }
+        }
+    }
+
+    private fun setChatsAdapter() {
+        messagesAdapter = MessagesAdapter(requireContext(), messages = messages)
+        binding.messagesRV.adapter = messagesAdapter
+        messagesAdapter?.openZoomImage = {
+            openZoomImage(it)
+        }
+        messagesAdapter?.playPauseAudio = { pos ->
+            if (lastAudioPosition == null) {
+                lastAudioPosition = pos
+                updatePlayStatus(pos, true)
+                playAudio(messages[pos].audio, pos, completed = {
+                    updatePlayStatus(pos, false)
+                })
+            } else {
+                if (lastAudioPosition == pos) {
+                    //stop current
+                    if (messages[pos].isPlaying == true) {
+                        updatePlayStatus(pos, false)
+                        stopAudio()
+                    } else {
+                        updatePlayStatus(pos, true)
+                        playAudio(messages[pos].audio, pos, completed = {
+                            updatePlayStatus(pos, false)
+                        })
+                    }
+                    messagesAdapter?.notifyItemChanged(pos)
+                } else {
+                    //stop last & play current
+                    lastAudioPosition?.let {
+                        if (messages[it].isPlaying == true)
+                            updatePlayStatus(it, false)
+                        stopAudio()
+                    }
+                    updatePlayStatus(pos, true)
+                    playAudio(messages[pos].audio, pos, completed = {
+                        updatePlayStatus(pos, false)
+                    })
+                }
+            }
+        }
+        binding.messagesRV.addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, oldBottom ->
+            if (bottom < oldBottom) {
+                binding.messagesRV.post {
+                    messagesAdapter?.itemCount?.let {
+                        if (it > 0) binding.messagesRV.smoothScrollToPosition(
+                            messagesAdapter?.itemCount?.minus(1) ?: 0
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun updatePlayStatus(pos: Int, isPlaying: Boolean) {
+        //update the recycler ui
+        messages[pos].isPlaying = isPlaying
+        messagesAdapter?.notifyItemChanged(pos)
+    }
+
+    private val typingHandler = Handler(Looper.getMainLooper())
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private val typingRunnable = Runnable {
+        onTypingStopped()
+    }
+
+    fun setupTypingDetector() {
+        binding.messageET.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+
+            @RequiresApi(Build.VERSION_CODES.O)
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                if (count > 0 || before > 0) {
+                    onTypingStarted()
+                }
+            }
+
+            @RequiresApi(Build.VERSION_CODES.O)
+            override fun afterTextChanged(s: Editable?) {
+                typingHandler.removeCallbacks(typingRunnable)
+                if (s.isNullOrEmpty()) {
+                    onTypingStopped()
+                } else {
+                    typingHandler.postDelayed(typingRunnable, TYPING_TIMEOUT_MS)
+                }
+            }
+        })
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun onTypingStarted() {
+        updateTypingStatus(true)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun onTypingStopped() {
+        updateTypingStatus(false)
+
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun updateTypingStatus(isTyping: Boolean, isRecording: Boolean = false) {
+        lifecycleScope.launch {
+            authViewModel.updateOnlineStatusFlow(
+                true,
+                isTyping,
+                getCurrentUtcDateTimeModern(),
+                receiverId.toString(),
+                isRecording = isRecording
+            )
+                .collect { state ->
+                    when (state) {
+                        is AuthState.Error -> {
+                            showToast(requireContext(),state.message)
+                        }
+
+                        AuthState.Loading -> {
+                        }
+
+                        is AuthState.Success -> {
+                        }
+                    }
+                }
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun updateMessageStatus(chatId: String) {
+        //only one id is required -> update the received messages only
+        lifecycleScope.launch {
+            authViewModel.updateMessageStatus(chatId).collect { state ->
+                when (state) {
+                    is AuthState.Error -> {
+                        showToast(requireContext(), state.message)
+                    }
+
+                    else -> {}
+                }
+            }
+        }
+    }
+
+
+    fun applySystemInsetsPadding(view: View) {
+        ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
+            val totalBottomInset =
+                insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime()).bottom
+            v.updatePadding(
+                left = v.paddingLeft,
+                top = v.paddingTop,
+                right = v.paddingRight,
+                bottom = totalBottomInset // Use the combined/total inset
+            )
+            WindowInsetsCompat.CONSUMED
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    override fun selectedImage(imagePath: String?, code: Int, type: String, uri: Uri) {
+        if (imagePath != null) {
+            val message = Message(
+                senderId = getString(requireContext(), Constants.USER_ID),
+                receiverId = receiverId,
+                senderName = getString(requireContext(), Constants.USER_NAME),
+                receiverName = receiverName,
+                message = binding.messageET.text.toString().trim(),
+                time = getCurrentUtcDateTimeModern(),
+                read = false,
+                gender = getString(requireContext(), Constants.USER_GENDER)?.toInt(),
+                senderGender = getString(requireContext(), Constants.USER_GENDER)
+                    ?.toInt(),
+                receiverGender = receiverGender,
+                receiverToken = receiverToken,
+                senderToken = getString(requireContext(), Constants.USER_TOKEN),
+            )
+            authViewModel.uploadImage(imagePath, message)
+            authViewModel.authState.observe(viewLifecycleOwner) { state ->
+                when (state) {
+                    is AuthState.Error -> {
+                        Log.d("rghejgrhkjgre", "selectedImage: ${state.message} ")
+                        showToast(requireContext(),"Error while sending message. Please try again.")
+                    }
+
+                    AuthState.Loading -> {
+                    }
+
+                    is AuthState.Success -> {
+                        binding.messageET.text = null
+                        messagesAdapter?.notifyDataSetChanged()
+                        binding.noMessagesTV.gone()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun playAudio(audio: String?, pos: Int, completed: () -> Unit) {
+        lastAudioPosition = pos
+        if (audio != null) {
+            val decodedFile = decodeBase64Audio(requireContext(), audio)
+            currentPlayingFile = decodedFile
+            mediaPlayer = MediaPlayer().apply {
+                try {
+                    setDataSource(decodedFile?.absolutePath)
+                    prepare()
+                    start()
+                    setOnCompletionListener {
+                        completed.invoke()
+                        stopAudio()
+                    }
+                    updateSeekBar(pos)
+                } catch (e: IOException) {
+                    Log.e("MainActivity", "Playback failed: ${e.localizedMessage}")
+                }
+            }
+        } else {
+            showToast(requireContext(),"Audio file doesn't exist.")
+        }
+    }
+
+    private fun updateSeekBar(index: Int) {
+        val runnable = object : Runnable {
+            override fun run() {
+                val player = mediaPlayer ?: return
+                if (player.isPlaying && index > 0) {
+                    val percent = (100 * player.currentPosition) / player.duration
+                    val holder = binding.messagesRV.findViewHolderForAdapterPosition(index)
+                            as? MessagesAdapter.HomeViewHolder
+                    if (messages[index].receiverId == getString(
+                            requireContext(),
+                            Constants.USER_ID
+                        )
+                    ) {
+                        holder?.receiverSB?.progress = percent
+                        seekHandler.postDelayed(this, 500)
+                    } else {
+                        holder?.senderSB?.progress = percent
+                        seekHandler.postDelayed(this, 500)
+                    }
+                }
+            }
+        }
+        seekHandler.post(runnable)
+    }
+
+    private fun stopAudio() {
+        updateSeekBar(0)
+        seekHandler.removeCallbacksAndMessages(null)
+        mediaPlayer?.release()
+        mediaPlayer = null
+        currentPlayingFile?.let {
+            if (it.exists()) {
+                it.delete()
+                Log.d("ChatFragment", "Temp audio file deleted successfully")
+            }
+        }
+        currentPlayingFile = null
+    }
+
+    override fun onDestroy() {
+        messagesAdapter?.unbind()
+        super.onDestroy()
+    }
+}

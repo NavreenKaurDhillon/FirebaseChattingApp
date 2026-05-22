@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/baseLayout"
+    app:cardMaxElevation="@dimen/_10sdp"
+    app:cardCornerRadius="@dimen/_8sdp"
+    android:layout_marginVertical="@dimen/_8sdp"
+    app:cardBackgroundColor="@color/white"
+    android:layout_height="wrap_content">
+
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:paddingHorizontal="@dimen/_12sdp"
+        android:paddingVertical="@dimen/_8sdp"
+        android:layout_height="wrap_content">
+        <ImageView
+            android:id="@+id/userIV"
+            android:layout_width="@dimen/_45sdp"
+            android:layout_height="@dimen/_45sdp"
+            android:src="@drawable/baseline_account_circle_24"
+            android:layout_marginEnd="@dimen/_12sdp" />
+        <TextView
+            android:id="@+id/idTV"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="User id"
+            android:visibility="gone"
+            android:textSize="@dimen/_13ssp"
+            android:fontFamily="sans-serif-medium"
+            android:layout_toRightOf="@id/userIV"
+            />
+
+        <TextView
+            android:id="@+id/nameTV"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_below="@id/idTV"
+            android:layout_toRightOf="@id/userIV"
+            android:fontFamily="sans-serif-medium"
+            android:layout_centerVertical="true"
+            android:textColor="@color/black"
+            android:textSize="@dimen/_13ssp" />
+
+        <TextView
+            android:id="@+id/emailTV"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_below="@id/nameTV"
+            android:layout_marginTop="@dimen/_2sdp"
+            android:layout_toRightOf="@id/userIV"
+            android:fontFamily="sans-serif"
+            android:visibility="gone"
+            android:textColor="@color/black"
+            android:text="User@gmail.com"
+            android:textSize="@dimen/_12ssp" />
+
+    </RelativeLayout>
+
+</androidx.cardview.widget.CardView>
