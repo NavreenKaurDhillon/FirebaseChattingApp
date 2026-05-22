@@ -18,8 +18,8 @@ import com.example.firebasechattingapplication.model.dataclasses.OnlineUser
 import com.example.firebasechattingapplication.model.dataclasses.User
 import com.example.firebasechattingapplication.utils.CommonFunctions.showToast
 import com.example.firebasechattingapplication.utils.Constants
-import com.example.firebasechattingapplication.utils.SharedPreferencesHelper.getString
-import com.example.firebasechattingapplication.utils.SharedPreferencesHelper.saveString
+import com.example.firebasechattingapplication.utils.DatastoreHelper.getString
+import com.example.firebasechattingapplication.utils.DatastoreHelper.saveString
 import com.example.firebasechattingapplication.utils.getCurrentUtcDateTimeModern
 import com.example.firebasechattingapplication.utils.gone
 import com.example.firebasechattingapplication.utils.visible
@@ -54,7 +54,9 @@ class HomeFragment : Fragment() {
     @RequiresApi(Build.VERSION_CODES.O)
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        Log.d("tokennnnnn", "onViewCreated home: ${getString(requireContext(), Constants.USER_TOKEN)}")
+        lifecycleScope.launch {
+            Log.d("tokennnnnn", "onViewCreated home: ${getString(requireContext(), Constants.USER_TOKEN)}")
+        }
         showUsersList()
         getUserData()
         showActiveUsersList()  //setup adapter

@@ -34,8 +34,9 @@ import com.example.firebasechattingapplication.utils.CommonFunctions.decodeBase6
 import com.example.firebasechattingapplication.utils.CommonFunctions.showSettingsDialog
 import com.example.firebasechattingapplication.utils.CommonFunctions.showToast
 import com.example.firebasechattingapplication.utils.Constants
+import com.example.firebasechattingapplication.utils.DatastoreHelper
 import com.example.firebasechattingapplication.utils.ImagePickerUtility
-import com.example.firebasechattingapplication.utils.SharedPreferencesHelper.getString
+import com.example.firebasechattingapplication.utils.DatastoreHelper.getString
 import com.example.firebasechattingapplication.utils.encodeAudioToBase64
 import com.example.firebasechattingapplication.utils.getCurrentUtcDateTimeModern
 import com.example.firebasechattingapplication.utils.gone
@@ -136,10 +137,13 @@ class ChatFragment : ImagePickerUtility() {
         }
         binding.tv.text = receiverName
         setChatsAdapter()
-        if (isFirstLoad) {  //to stop get message being called everytime i come back from zoom image fragment
-            getMessages(getString(requireContext(), Constants.USER_ID), receiverId)
-            isFirstLoad = false
+        lifecycleScope.launch {
+            if (isFirstLoad) {  //to stop get message being called everytime i come back from zoom image fragment
+                getMessages(getString(requireContext(), Constants.USER_ID), receiverId)
+                isFirstLoad = false
+            }
         }
+
         getActiveUsers()
         setUpClickListeners()
         setupTypingDetector()
@@ -220,16 +224,20 @@ class ChatFragment : ImagePickerUtility() {
     }
 
     private fun fetchUserToken(messageList: List<Message>) {
-       for(m in messageList){
-           if (m.senderId != getString(requireContext(), Constants.USER_ID))
-               receiverToken = m.senderToken
-           else
-               receiverToken = m.receiverToken
-           if (!receiverToken.isNullOrEmpty()){
-               Log.d("lfkjwfkjkfwe", "fetchUserToken: $receiverToken")
-               return
-           }
-       }
+        lifecycleScope.launch {
+            for(m in messageList){
+                if (m.senderId != getString(requireContext(), Constants.USER_ID))
+                    receiverToken = m.senderToken
+                else
+                    receiverToken = m.receiverToken
+                if (!receiverToken.isNullOrEmpty()){
+                    Log.d("lfkjwfkjkfwe", "fetchUserToken: $receiverToken")
+
+                }
+            }
+        }
+        return
+
     }
 
     private fun checkPermissions(): Boolean {
@@ -288,85 +296,93 @@ class ChatFragment : ImagePickerUtility() {
 
     @RequiresApi(Build.VERSION_CODES.O)
     private fun sendMessage(message: String?, base64Audio: String?) {
-        val message = Message(
-            senderId = getString(requireContext(), Constants.USER_ID),
-            receiverId = receiverId,
-            senderName = getString(requireContext(), Constants.USER_NAME),
-            receiverName = receiverName,
-            message = message,
-            time = getCurrentUtcDateTimeModern(),
-            read = false,
-            gender = getString(requireContext(), Constants.USER_GENDER)?.toInt(),
-            senderGender = getString(requireContext(), Constants.USER_GENDER)?.toInt(),
-            receiverGender = receiverGender,
-            receiverToken = receiverToken,
-            senderToken = getString(requireContext(), Constants.USER_TOKEN),
-            audio = base64Audio
-        )
-        binding.messageET.text = null
-        authViewModel.sendMessageToUser(message)
-        authViewModel.authState.observe(viewLifecycleOwner) { state ->
-            when (state) {
-                is AuthState.Error -> {
-                    showToast(requireContext(),"Error while sending message. Please try again.")
-                }
+        lifecycleScope.launch {
+            val message = Message(
+                senderId = getString(requireContext(), Constants.USER_ID),
+                receiverId = receiverId,
+                senderName = getString(requireContext(), Constants.USER_NAME),
+                receiverName = receiverName,
+                message = message,
+                time = getCurrentUtcDateTimeModern(),
+                read = false,
+                gender = getString(requireContext(), Constants.USER_GENDER)?.toInt(),
+                senderGender = getString(requireContext(), Constants.USER_GENDER)?.toInt(),
+                receiverGender = receiverGender,
+                receiverToken = receiverToken,
+                senderToken = getString(requireContext(), Constants.USER_TOKEN),
+                audio = base64Audio
+            )
+            binding.messageET.text = null
+            authViewModel.sendMessageToUser(message)
+            authViewModel.authState.observe(viewLifecycleOwner) { state ->
+                when (state) {
+                    is AuthState.Error -> {
+                        showToast(
+                            requireContext(),
+                            "Error while sending message. Please try again."
+                        )
+                    }
 
-                AuthState.Loading -> {}
-                is AuthState.Success -> {
-                    messagesAdapter?.notifyDataSetChanged()
-                    binding.noMessagesTV.gone()
+                    AuthState.Loading -> {}
+                    is AuthState.Success -> {
+                        messagesAdapter?.notifyDataSetChanged()
+                        binding.noMessagesTV.gone()
+                    }
                 }
             }
         }
     }
 
     private fun setChatsAdapter() {
-        messagesAdapter = MessagesAdapter(requireContext(), messages = messages)
-        binding.messagesRV.adapter = messagesAdapter
-        messagesAdapter?.openZoomImage = {
-            openZoomImage(it)
-        }
-        messagesAdapter?.playPauseAudio = { pos ->
-            if (lastAudioPosition == null) {
-                lastAudioPosition = pos
-                updatePlayStatus(pos, true)
-                playAudio(messages[pos].audio, pos, completed = {
-                    updatePlayStatus(pos, false)
-                })
-            } else {
-                if (lastAudioPosition == pos) {
-                    //stop current
-                    if (messages[pos].isPlaying == true) {
+        lifecycleScope.launch {
+            val userId = getString(requireContext(), Constants.USER_ID)
+            messagesAdapter = MessagesAdapter(requireContext(), messages = messages, userId)
+            binding.messagesRV.adapter = messagesAdapter
+            messagesAdapter?.openZoomImage = {
+                openZoomImage(it)
+            }
+            messagesAdapter?.playPauseAudio = { pos ->
+                if (lastAudioPosition == null) {
+                    lastAudioPosition = pos
+                    updatePlayStatus(pos, true)
+                    playAudio(messages[pos].audio, pos, completed = {
                         updatePlayStatus(pos, false)
-                        stopAudio()
+                    })
+                } else {
+                    if (lastAudioPosition == pos) {
+                        //stop current
+                        if (messages[pos].isPlaying == true) {
+                            updatePlayStatus(pos, false)
+                            stopAudio()
+                        } else {
+                            updatePlayStatus(pos, true)
+                            playAudio(messages[pos].audio, pos, completed = {
+                                updatePlayStatus(pos, false)
+                            })
+                        }
+                        messagesAdapter?.notifyItemChanged(pos)
                     } else {
+                        //stop last & play current
+                        lastAudioPosition?.let {
+                            if (messages[it].isPlaying == true)
+                                updatePlayStatus(it, false)
+                            stopAudio()
+                        }
                         updatePlayStatus(pos, true)
                         playAudio(messages[pos].audio, pos, completed = {
                             updatePlayStatus(pos, false)
                         })
                     }
-                    messagesAdapter?.notifyItemChanged(pos)
-                } else {
-                    //stop last & play current
-                    lastAudioPosition?.let {
-                        if (messages[it].isPlaying == true)
-                            updatePlayStatus(it, false)
-                        stopAudio()
-                    }
-                    updatePlayStatus(pos, true)
-                    playAudio(messages[pos].audio, pos, completed = {
-                        updatePlayStatus(pos, false)
-                    })
                 }
             }
-        }
-        binding.messagesRV.addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, oldBottom ->
-            if (bottom < oldBottom) {
-                binding.messagesRV.post {
-                    messagesAdapter?.itemCount?.let {
-                        if (it > 0) binding.messagesRV.smoothScrollToPosition(
-                            messagesAdapter?.itemCount?.minus(1) ?: 0
-                        )
+            binding.messagesRV.addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, oldBottom ->
+                if (bottom < oldBottom) {
+                    binding.messagesRV.post {
+                        messagesAdapter?.itemCount?.let {
+                            if (it > 0) binding.messagesRV.smoothScrollToPosition(
+                                messagesAdapter?.itemCount?.minus(1) ?: 0
+                            )
+                        }
                     }
                 }
             }
@@ -479,40 +495,43 @@ class ChatFragment : ImagePickerUtility() {
 
     @RequiresApi(Build.VERSION_CODES.O)
     override fun selectedImage(imagePath: String?, code: Int, type: String, uri: Uri) {
-        if (imagePath != null) {
-            val message = Message(
-                senderId = getString(requireContext(), Constants.USER_ID),
-                receiverId = receiverId,
-                senderName = getString(requireContext(), Constants.USER_NAME),
-                receiverName = receiverName,
-                message = binding.messageET.text.toString().trim(),
-                time = getCurrentUtcDateTimeModern(),
-                read = false,
-                gender = getString(requireContext(), Constants.USER_GENDER)?.toInt(),
-                senderGender = getString(requireContext(), Constants.USER_GENDER)
-                    ?.toInt(),
-                receiverGender = receiverGender,
-                receiverToken = receiverToken,
-                senderToken = getString(requireContext(), Constants.USER_TOKEN),
-            )
-            authViewModel.uploadImage(imagePath, message)
-            authViewModel.authState.observe(viewLifecycleOwner) { state ->
-                when (state) {
-                    is AuthState.Error -> {
-                        Log.d("rghejgrhkjgre", "selectedImage: ${state.message} ")
-                        showToast(requireContext(),"Error while sending message. Please try again.")
-                    }
+        lifecycleScope.launch {
+            if (imagePath != null) {
+                val message = Message(
+                    senderId = getString(requireContext(), Constants.USER_ID),
+                    receiverId = receiverId,
+                    senderName = getString(requireContext(), Constants.USER_NAME),
+                    receiverName = receiverName,
+                    message = binding.messageET.text.toString().trim(),
+                    time = getCurrentUtcDateTimeModern(),
+                    read = false,
+                    gender = getString(requireContext(), Constants.USER_GENDER)?.toInt(),
+                    senderGender = getString(requireContext(), Constants.USER_GENDER)
+                        ?.toInt(),
+                    receiverGender = receiverGender,
+                    receiverToken = receiverToken,
+                    senderToken = getString(requireContext(), Constants.USER_TOKEN),
+                )
+                authViewModel.uploadImage(imagePath, message)
+                authViewModel.authState.observe(viewLifecycleOwner) { state ->
+                    when (state) {
+                        is AuthState.Error -> {
+                            Log.d("rghejgrhkjgre", "selectedImage: ${state.message} ")
+                            showToast(requireContext(),"Error while sending message. Please try again.")
+                        }
 
-                    AuthState.Loading -> {
-                    }
+                        AuthState.Loading -> {
+                        }
 
-                    is AuthState.Success -> {
-                        binding.messageET.text = null
-                        messagesAdapter?.notifyDataSetChanged()
-                        binding.noMessagesTV.gone()
+                        is AuthState.Success -> {
+                            binding.messageET.text = null
+                            messagesAdapter?.notifyDataSetChanged()
+                            binding.noMessagesTV.gone()
+                        }
                     }
                 }
             }
+
         }
     }
 
@@ -541,28 +560,27 @@ class ChatFragment : ImagePickerUtility() {
     }
 
     private fun updateSeekBar(index: Int) {
-        val runnable = object : Runnable {
-            override fun run() {
-                val player = mediaPlayer ?: return
-                if (player.isPlaying && index > 0) {
-                    val percent = (100 * player.currentPosition) / player.duration
-                    val holder = binding.messagesRV.findViewHolderForAdapterPosition(index)
-                            as? MessagesAdapter.HomeViewHolder
-                    if (messages[index].receiverId == getString(
-                            requireContext(),
-                            Constants.USER_ID
-                        )
-                    ) {
-                        holder?.receiverSB?.progress = percent
-                        seekHandler.postDelayed(this, 500)
-                    } else {
-                        holder?.senderSB?.progress = percent
-                        seekHandler.postDelayed(this, 500)
+        lifecycleScope.launch {
+            val currentUserId = DatastoreHelper.getString(requireContext(), Constants.USER_ID)
+            val runnable = object : Runnable {
+                override fun run() {
+                    val player = mediaPlayer ?: return
+                    if (player.isPlaying && index > 0) {
+                        val percent = (100 * player.currentPosition) / player.duration
+                        val holder = binding.messagesRV.findViewHolderForAdapterPosition(index)
+                                as? MessagesAdapter.HomeViewHolder
+                        if (messages[index].receiverId == currentUserId) {
+                            holder?.receiverSB?.progress = percent
+                            seekHandler.postDelayed(this, 500)
+                        } else {
+                            holder?.senderSB?.progress = percent
+                            seekHandler.postDelayed(this, 500)
+                        }
                     }
                 }
             }
+            seekHandler.post(runnable)
         }
-        seekHandler.post(runnable)
     }
 
     private fun stopAudio() {

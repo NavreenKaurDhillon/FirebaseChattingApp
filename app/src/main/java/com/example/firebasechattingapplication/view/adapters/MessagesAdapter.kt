@@ -17,7 +17,7 @@ import com.example.firebasechattingapplication.R
 import com.example.firebasechattingapplication.databinding.ChatMessageItemBinding
 import com.example.firebasechattingapplication.model.dataclasses.Message
 import com.example.firebasechattingapplication.utils.Constants
-import com.example.firebasechattingapplication.utils.SharedPreferencesHelper.getString
+import com.example.firebasechattingapplication.utils.DatastoreHelper.getString
 import com.example.firebasechattingapplication.utils.formatIsoDateTime
 import com.example.firebasechattingapplication.utils.gone
 import com.example.firebasechattingapplication.utils.toChatDate
@@ -28,7 +28,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class MessagesAdapter(var context: Context, private val messages: List<Message>) : RecyclerView.Adapter<MessagesAdapter.HomeViewHolder>() {
+class MessagesAdapter(var context: Context, private val messages: List<Message>, private val userId: String?) : RecyclerView.Adapter<MessagesAdapter.HomeViewHolder>() {
 
     private val scope = CoroutineScope(Dispatchers.Main.immediate)
     private var imageLoadingJob: Job? = null
@@ -82,7 +82,7 @@ class MessagesAdapter(var context: Context, private val messages: List<Message>)
                 playPauseAudio?.invoke(position)
             }
 
-            if (messages[position].receiverId == getString(context, Constants.USER_ID)) {
+            if (messages[position].receiverId == userId) {
                 receivedLayout.visibility = View.VISIBLE
                 sentLayout.visibility = View.GONE
                 if (!messages[position].image.isNullOrEmpty()) {

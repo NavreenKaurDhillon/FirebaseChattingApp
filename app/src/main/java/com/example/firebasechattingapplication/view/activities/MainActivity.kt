@@ -33,7 +33,7 @@ import com.example.firebasechattingapplication.utils.ProgressIndicator
 import com.example.firebasechattingapplication.google.TokenAcquisitionListener
 import com.example.firebasechattingapplication.utils.CommonFunctions.showSettingsDialog
 import com.example.firebasechattingapplication.utils.CommonFunctions.showToast
-import com.example.firebasechattingapplication.utils.SharedPreferencesHelper.getString
+import com.example.firebasechattingapplication.utils.DatastoreHelper.getString
 import com.example.firebasechattingapplication.utils.getCurrentUtcDateTimeModern
 import com.example.firebasechattingapplication.utils.gone
 import com.example.firebasechattingapplication.utils.visible
@@ -132,28 +132,30 @@ class MainActivity : AppCompatActivity(), TokenAcquisitionListener {
 
 
     private fun checkUserSession() {
-        if (getString(this@MainActivity, Constants.USER_ID) != null) {
-            viewModel.isUserLogged()
-            viewModel.authState.observe(this) { state ->
-                when (state) {
-                    is AuthState.Error -> {
-                        ProgressIndicator.hide()
-                        showToast(this@MainActivity,"Session expired. Please login.")
-                        navController.navigate(R.id.loginFragment)
-                    }
+        lifecycleScope.launch {
+            if (getString(this@MainActivity, Constants.USER_ID) != null) {
+                viewModel.isUserLogged()
+                viewModel.authState.observe(this@MainActivity) { state ->
+                    when (state) {
+                        is AuthState.Error -> {
+                            ProgressIndicator.hide()
+                            showToast(this@MainActivity,"Session expired. Please login.")
+                            navController.navigate(R.id.loginFragment)
+                        }
 
-                    AuthState.Loading -> {
-                        ProgressIndicator.show(this@MainActivity)
-                    }
+                        AuthState.Loading -> {
+                            ProgressIndicator.show(this@MainActivity)
+                        }
 
-                    is AuthState.Success -> {
-                        ProgressIndicator.hide()
-                        navController.navigate(R.id.homeFragment)
+                        is AuthState.Success -> {
+                            ProgressIndicator.hide()
+                            navController.navigate(R.id.homeFragment)
+                        }
                     }
                 }
             }
-        }
 
+        }
     }
 
 

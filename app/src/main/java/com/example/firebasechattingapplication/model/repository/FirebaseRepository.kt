@@ -11,7 +11,7 @@ import com.example.firebasechattingapplication.model.dataclasses.User
 import com.example.firebasechattingapplication.utils.Constants
 import com.example.firebasechattingapplication.utils.Constants.ONLINE_USERS_COLLECTION
 import com.example.firebasechattingapplication.utils.Constants.USERS_COLLECTION
-import com.example.firebasechattingapplication.utils.SharedPreferencesHelper.getString
+import com.example.firebasechattingapplication.utils.DatastoreHelper.getString
 import com.example.firebasechattingapplication.utils.getCurrentUtcDateTimeModern
 import com.google.firebase.auth.AuthResult
 import com.google.firebase.auth.FirebaseAuth
@@ -21,9 +21,11 @@ import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.WriteBatch
 import com.google.firebase.messaging.FirebaseMessaging
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -32,7 +34,8 @@ import javax.inject.Singleton
 @Singleton
 class FirebaseRepository @Inject constructor(
     private val firebaseAuth: FirebaseAuth,
-    private val firebaseFirestore: FirebaseFirestore
+    private val firebaseFirestore: FirebaseFirestore,
+    @ApplicationContext private val context: Context
 ) {
 
     //register user
@@ -90,7 +93,6 @@ class FirebaseRepository @Inject constructor(
     //manage active status
     @RequiresApi(Build.VERSION_CODES.O)
     suspend fun updateOnlineStatus(
-        context: Context,
         isOnline: Boolean,
         isTyping: Boolean,
         lastSeen: String,
@@ -270,7 +272,7 @@ class FirebaseRepository @Inject constructor(
     }*/
 
     //get active users list
-    fun getOnlineUsers(context: Context): Flow<List<OnlineUser>> = callbackFlow {  //flow builder
+    fun getOnlineUsers(): Flow<List<OnlineUser>> = callbackFlow {  //flow builder
         //code here runs when observer start observing when .collect() is called
 
         //create query which points to the collection you want to listen
@@ -288,11 +290,14 @@ class FirebaseRepository @Inject constructor(
                 val messages = snapshot.documents.mapNotNull { document ->
                     document.toObject(OnlineUser::class.java)
                 }
-                //emit the new list to the collector
-                trySend(messages.filter {
-                    //filter the list -> user doesn't see themselves in the active list
-                    it.id != getString(context = context, Constants.USER_ID)
-                })
+                launch {
+                    //emit the new list to the collector
+                    trySend(messages.filter {
+                        //filter the list -> user doesn't see themselves in the active list
+                        it.id != getString(context = context, Constants.USER_ID)
+                    })
+                }
+
             } else if (snapshot != null && snapshot.isEmpty) {
                 // Emit an empty list if no docs
                 trySend(emptyList())

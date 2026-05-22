@@ -18,9 +18,9 @@ import com.example.firebasechattingapplication.model.dataclasses.OnlineUser
 import com.example.firebasechattingapplication.model.dataclasses.User
 import com.example.firebasechattingapplication.model.repository.FirebaseRepository
 import com.example.firebasechattingapplication.utils.Constants
-import com.example.firebasechattingapplication.utils.SharedPreferencesHelper.cleanPref
-import com.example.firebasechattingapplication.utils.SharedPreferencesHelper.getString
-import com.example.firebasechattingapplication.utils.SharedPreferencesHelper.saveString
+import com.example.firebasechattingapplication.utils.DatastoreHelper.cleanPref
+import com.example.firebasechattingapplication.utils.DatastoreHelper.getString
+import com.example.firebasechattingapplication.utils.DatastoreHelper.saveString
 import com.example.firebasechattingapplication.utils.getCurrentUtcDateTimeModern
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -68,16 +68,18 @@ class AuthViewModel @Inject constructor(
                 val result = repository.registerUser(userData.email.toString(), userData.password.toString())
                 //after successful registration save user info to firestore
                 repository.getAndSaveFCMToken { token ->  //fetch fcm token
-                    saveString(application, Constants.USER_TOKEN, token)
-                    val user = User(
-                        name = userData.name.toString(),
-                        email = userData.email, gender = userData.gender,
-                        password = userData.password,
-                        id = result?.user?.uid ?: "",
-                        currentTime = getCurrentUtcDateTimeModern(),
-                        token = token
-                    )
-                    addUserToFirestore(user)
+                    viewModelScope.launch {
+                        saveString(application, Constants.USER_TOKEN, token)
+                        val user = User(
+                            name = userData.name.toString(),
+                            email = userData.email, gender = userData.gender,
+                            password = userData.password,
+                            id = result?.user?.uid ?: "",
+                            currentTime = getCurrentUtcDateTimeModern(),
+                            token = token
+                        )
+                        addUserToFirestore(user)
+                    }
                 }
 
             } catch (e: Exception) {
@@ -90,10 +92,12 @@ class AuthViewModel @Inject constructor(
         _authState.value = AuthState.Loading
         viewModelScope.launch {
             try {
-                //hit repo method to check user login
-                val result = repository.loginUser(email, password)
-                saveString(application, Constants.USER_ID, result?.user?.uid)
-                updateFCMToken()
+                viewModelScope.launch {
+                    //hit repo method to check user login
+                    val result = repository.loginUser(email, password)
+                    saveString(application, Constants.USER_ID, result?.user?.uid?:"")
+                    updateFCMToken()
+                }
             } catch (e: Exception) {
                 _authState.value = AuthState.Error(e.message ?: "Login failed")
             }
@@ -213,7 +217,7 @@ class AuthViewModel @Inject constructor(
 
     fun getOnlineUsers(): StateFlow<List<OnlineUser>> {
 
-        val flow = repository.getOnlineUsers(application)
+        val flow = repository.getOnlineUsers()
         return flow
             .catch { e ->
                 Log.e("ChatFlow", "Error: ${e.message}", e)
@@ -235,7 +239,7 @@ class AuthViewModel @Inject constructor(
     ): Flow<AuthState> = flow {
         emit(AuthState.Loading)
         try {
-            repository.updateOnlineStatus(application, isOnline, isTyping, lastSeen, typingToUserId, isRecording)
+            repository.updateOnlineStatus( isOnline, isTyping, lastSeen, typingToUserId, isRecording)
             emit(AuthState.Success("Status updated."))
         } catch (e: Exception) {
             emit(AuthState.Error(e.message ?: "Failed to update status."))

@@ -14,7 +14,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.firebasechattingapplication.R
 import com.example.firebasechattingapplication.utils.Constants
-import com.example.firebasechattingapplication.utils.SharedPreferencesHelper.getString
+import com.example.firebasechattingapplication.utils.DatastoreHelper.getString
 import com.example.firebasechattingapplication.view.activities.MainActivity
 import com.example.firebasechattingapplication.view.fragments.ChatFragment
 import com.google.firebase.auth.FirebaseAuth
@@ -22,6 +22,10 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -33,7 +37,9 @@ class FirebaseMessagingService : FirebaseMessagingService() {
     private val TAG = "FCM_TOKEN_SERVICE"
     val CHANNEL_ID = "default_channel"
     private lateinit var soundUri: Uri
-
+    // Since FirebaseMessagingService doesn't have an inherent LifecycleOwner,
+    // define a CoroutineScope to handle suspend functions safely.
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
@@ -56,8 +62,10 @@ class FirebaseMessagingService : FirebaseMessagingService() {
                     intent.putExtra("sender_gender", senderGender)
                     intent.putExtra("sender_token", senderToken)
                     intent.putExtra("message", message)
-                    if (!ChatFragment.isChatOpen && getString(this, Constants.USER_ID)!=null)
-                        makePush(intent, senderName,message)
+                    serviceScope.launch {
+                        if (!ChatFragment.isChatOpen && getString(this@FirebaseMessagingService, Constants.USER_ID) != null)
+                            makePush(intent, senderName, message)
+                    }
                 }
             } catch (_: Exception) {
             }

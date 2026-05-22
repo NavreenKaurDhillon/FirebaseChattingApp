@@ -14,7 +14,7 @@ import com.example.firebasechattingapplication.databinding.FragmentChatListBindi
 import com.example.firebasechattingapplication.model.dataclasses.Message
 import com.example.firebasechattingapplication.utils.CommonFunctions.showToast
 import com.example.firebasechattingapplication.utils.Constants
-import com.example.firebasechattingapplication.utils.SharedPreferencesHelper.getString
+import com.example.firebasechattingapplication.utils.DatastoreHelper.getString
 import com.example.firebasechattingapplication.utils.gone
 import com.example.firebasechattingapplication.utils.visible
 import com.example.firebasechattingapplication.view.adapters.ChatsAdapter
